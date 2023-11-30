@@ -1,0 +1,96 @@
+---
+- hosts: all
+  remote_user: core
+  vars:
+    boolean1: true
+    boolean2: false
+  become: true
+
+  tasks:
+    # check journal log for "No valid client certificate is found but the server is not responsive. A restart may be necessary to retrieve new initial credentials."
+    #
+    - name: get journal entries
+      ansible.builtin.command: journalctl -x --no-pager -n 100 -u kubelet
+      register: journallog
+
+    - ansible.builtin.debug:
+        msg: Its there
+      when: '"No valid client certificate is found but the server is not responsive. A restart may be necessary to retrieve new initial credentials." in journallog.stdout'
+
+    - block:
+        - name: Copy node kubeconfig over the root kubeconfig
+          ansible.builtin.copy:
+            remote_src: true
+            src: /etc/kubernetes/static-pod-resources/kube-apiserver-certs/secrets/node-kubeconfigs/localhost.kubeconfig
+            dest: /root/.kube/config
+            owner: root
+            group: root
+            mode: "0400"
+
+        # run systemctl stop kubelet
+        - name: Stop kubelet
+          ansible.builtin.systemd_service:
+            name: kubelet
+            state: stopped
+
+        # create a backup
+        - name: Create a directory for backing up
+          ansible.builtin.file:
+            path: /root/bkp
+            state: directory
+            mode: "0755"
+
+        - name: Check kubelet/pki file exists
+          ansible.builtin.stat:
+            path: /var/lib/kubelet/pki
+          register: pkifile
+
+        - name: If it does, copy kubelet/pki into backup folder
+          ansible.builtin.copy:
+            remote_src: true
+            src: /var/lib/kubelet/pki
+            dest: /root/bkp/
+            owner: root
+            group: root
+          when: pkifile.stat.exists
+
+        - name: Check kubelet/kubeconfig file exists
+          ansible.builtin.stat:
+            path: /var/lib/kubelet/kubeconfig
+          register: kcfile
+
+        - name: Copy kubelet/pki into backup folder
+          ansible.builtin.copy:
+            remote_src: true
+            src: /var/lib/kubelet/kubeconfig
+            dest: /root/bkp/
+            owner: root
+            group: root
+          when: kcfile.stat.exists
+
+        - name: Remove files backed up
+          ansible.builtin.file:
+            path: /var/lib/kubelet/pki
+            state: absent
+
+        - name: Remove files backed up
+          ansible.builtin.file:
+            path: /var/lib/kubelet/kubeconfig
+            state: absent
+
+        # restart kubelet
+        - name: Restart kubelet
+          ansible.builtin.systemd_service:
+            name: kubelet
+            state: started
+
+        # remove any pending csrs
+        # oc delete csr --all
+        - name: Remove all pending csrs
+          ansible.builtin.command: oc delete csr --all
+
+        # approve any new csrs
+        # oc get csr | cut -f1 -d" " | sort -r | xargs oc adm certificate approve
+        - name: Remove all pending csrs
+          ansible.builtin.shell: oc get csr | cut -f1 -d" " | sort -r | xargs oc adm certificate approve
+      when: '"No valid client certificate is found but the server is not responsive. A restart may be necessary to retrieve new initial credentials." in journallog.stdout'
