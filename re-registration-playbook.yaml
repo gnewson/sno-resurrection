@@ -84,6 +84,11 @@
             name: kubelet
             state: started
 
+        # Wait 30 secs for restart to take place
+        - name: pause for 30 seconds
+          ansible.builtin.pause:
+            seconds: 30
+
         # remove any pending csrs
         # oc delete csr --all
         - name: Remove all pending csrs
@@ -92,5 +97,5 @@
         # approve any new csrs
         # oc get csr | cut -f1 -d" " | sort -r | xargs oc adm certificate approve
         - name: Remove all pending csrs
-          ansible.builtin.shell: oc get csr | cut -f1 -d" " | sort -r | xargs oc adm certificate approve
+          ansible.builtin.shell: oc get csr | tail -n +2 | cut -f1 -d" " | sort -r | xargs oc adm certificate approve
       when: '"No valid client certificate is found but the server is not responsive. A restart may be necessary to retrieve new initial credentials." in journallog.stdout'
